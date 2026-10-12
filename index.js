@@ -135,11 +135,12 @@ async function buildLookup(user, onlySlot) {
 
   const ban = banText(banInfo);
   embed.setColor(ban ? 0xe53e3e : 0x2b6cb0);
-  if (ban) embed.addFields({ name: '🔨 BANNED', value: clip(ban) });
+  // Status is always the first field, so the embed is never empty and bans show even without data.
+  embed.addFields({ name: 'Status', value: ban ? clip(`🔨 BANNED: ${ban}`) : 'Not banned' });
 
   const pd = profile && ((profile.Data && profile.Data.PlayerData) || profile.PlayerData);
   if (!pd) {
-    embed.setDescription('No saved game data found for this user (they may never have joined).');
+    embed.setDescription('No saved game data found. This user may never have joined.');
     return embed;
   }
   embed.setDescription('Saved data (updates when the game autosaves, so it can be a minute or two behind).');
@@ -177,7 +178,7 @@ async function buildLookup(user, onlySlot) {
     .map((p) => `${p[4]} — ${p[0]} (${(p[1] || '').split(':').slice(1).join(':')})`);
   if (mine.length) embed.addFields({ name: 'Licensed vehicles (plates)', value: clip(mine.join('\n')) });
 
-  if (!embed.data.fields || embed.data.fields.length === 0) {
+  if (embed.data.fields.length === 1) { // only the status field
     embed.addFields({ name: 'Characters', value: 'No character data found.' });
   }
   return embed;
@@ -186,29 +187,49 @@ async function buildLookup(user, onlySlot) {
 // ---- Panel ----
 const PANEL_TITLE = 'Main Game Control Panel';
 const EPHEMERAL = MessageFlags.Ephemeral;
-// 1 = staff, 2 = admin
-const PERM = { lookup: 1, kick: 1, ban: 2, unban: 2, ssu_start: 2, ssu_stop: 2 };
+// 0 = everyone, 1 = staff, 2 = admin
+const PERM = { lookup: 1, kick: 1, ban: 2, unban: 2, ssu_start: 2, ssu_stop: 2, whoami: 0 };
+const LEVEL_NAMES = { 0: 'No panel access', 1: 'Staff', 2: 'Admin' };
+const levelName = (n) => LEVEL_NAMES[n] || 'Unknown';
+
+// Plain names for the actions that are gated by PERM (used in button labels and the panel text)
+const ACTION_NAMES = {
+  lookup: 'Lookup Player', kick: 'Kick', ban: 'Ban', unban: 'Unban',
+  ssu_start: 'SSU Start', ssu_stop: 'SSU Stop',
+};
 
 const btn = (id, label, style, emoji) =>
   new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style).setEmoji(emoji);
+const permBtn = (action, style, emoji) =>
+  btn(`p:${action}`, `${ACTION_NAMES[action]} (${levelName(PERM[action])})`, style, emoji);
+
+function permDescription() {
+  const lines = [];
+  for (const level of [1, 2]) {
+    const names = Object.keys(ACTION_NAMES).filter((a) => PERM[a] === level).map((a) => ACTION_NAMES[a]);
+    if (names.length) lines.push(`**${levelName(level)}:** ${names.join(', ')}`);
+  }
+  return ['Use the buttons below.', ...lines].join('\n');
+}
 
 function panelPayload() {
   const embed = new EmbedBuilder()
     .setTitle(PANEL_TITLE)
     .setColor(0x2b6cb0)
-    .setDescription('Use the buttons below.\n**Staff:** Lookup, Kick\n**Admin:** Ban, Unban, SSU');
+    .setDescription(permDescription());
   return {
     embeds: [embed],
     components: [
       new ActionRowBuilder().addComponents(
-        btn('p:lookup', 'Lookup Player', ButtonStyle.Primary, '🔍'),
-        btn('p:kick', 'Kick', ButtonStyle.Secondary, '👢'),
-        btn('p:ban', 'Ban', ButtonStyle.Danger, '🔨'),
-        btn('p:unban', 'Unban', ButtonStyle.Success, '✅'),
+        permBtn('lookup', ButtonStyle.Primary, '🔍'),
+        permBtn('kick', ButtonStyle.Secondary, '👢'),
+        permBtn('ban', ButtonStyle.Danger, '🔨'),
+        permBtn('unban', ButtonStyle.Success, '✅'),
       ),
       new ActionRowBuilder().addComponents(
-        btn('p:ssu_start', 'SSU Start', ButtonStyle.Success, '🟢'),
-        btn('p:ssu_stop', 'SSU Stop', ButtonStyle.Danger, '🔴'),
+        permBtn('ssu_start', ButtonStyle.Success, '🟢'),
+        permBtn('ssu_stop', ButtonStyle.Danger, '🔴'),
+        btn('p:whoami', 'Who am I?', ButtonStyle.Secondary, '🪪'),
       ),
     ],
   };
@@ -278,7 +299,24 @@ const denied = (i) => i.reply({ content: 'You do not have permission to do that.
 
 async function onButton(i) {
   const [kind, action, userId = '-', name = '-'] = i.customId.split(':');
-  if ((kind !== 'p' && kind !== 'q') || !PERM[action]) return;
+  if ((kind !== 'p' && kind !== 'q') || !Object.prototype.hasOwnProperty.call(PERM, action)) return;
+
+  if (action === 'whoami') {
+    if (!i.member) {
+      return i.reply({ content: 'Cannot determine your access level here (no server member).', flags: EPHEMERAL });
+    }
+    const level = accessLevel(i.member);
+    const held = [...ADMIN, ...STAFF].filter((r, n, all) => all.indexOf(r) === n && i.member.roles.cache.has(r));
+    const embed = new EmbedBuilder()
+      .setTitle('Your panel access')
+      .setColor(0x2b6cb0)
+      .addFields(
+        { name: 'Access level', value: levelName(level) },
+        { name: 'Matching roles', value: held.length ? held.map((r) => `<@&${r}>`).join(', ') : 'None' },
+      );
+    return i.reply({ embeds: [embed], flags: EPHEMERAL });
+  }
+
   if (accessLevel(i.member) < PERM[action]) return denied(i);
 
   if (action === 'ssu_stop') {
