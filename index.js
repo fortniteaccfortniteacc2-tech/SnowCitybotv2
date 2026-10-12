@@ -131,14 +131,16 @@ async function buildLookup(user, onlySlot) {
   const embed = new EmbedBuilder()
     .setTitle(`${user.name} (${user.id})`)
     .setURL(`https://www.roblox.com/users/${user.id}/profile`)
+    .setFooter({ text: `Roblox ID: ${user.id}` })
     .setTimestamp();
 
   const ban = banText(banInfo);
-  embed.setColor(ban ? 0xe53e3e : 0x2b6cb0);
-  // Status is always the first field, so the embed is never empty and bans show even without data.
-  embed.addFields({ name: 'Status', value: ban ? clip(`🔨 BANNED: ${ban}`) : 'Not banned' });
-
   const pd = profile && ((profile.Data && profile.Data.PlayerData) || profile.PlayerData);
+  // red = banned, grey = no saved data, green = clean with saved data
+  embed.setColor(ban ? 0xe53e3e : pd ? 0x38a169 : 0x718096);
+  // Status is always the first field, so the embed is never empty and bans show even without data.
+  embed.addFields({ name: 'Status', value: ban ? clip(`🔨 BANNED: ${ban}`) : '✅ Not banned' });
+
   if (!pd) {
     embed.setDescription('No saved game data found. This user may never have joined.');
     return embed;
@@ -191,6 +193,7 @@ const EPHEMERAL = MessageFlags.Ephemeral;
 const PERM = { lookup: 1, kick: 1, ban: 2, unban: 2, ssu_start: 2, ssu_stop: 2, whoami: 0 };
 const LEVEL_NAMES = { 0: 'No panel access', 1: 'Staff', 2: 'Admin' };
 const levelName = (n) => LEVEL_NAMES[n] || 'Unknown';
+const LEVEL_EMOJI = { 1: '🟦', 2: '🟥' };
 
 // Plain names for the actions that are gated by PERM (used in button labels and the panel text)
 const ACTION_NAMES = {
@@ -207,7 +210,7 @@ function permDescription() {
   const lines = [];
   for (const level of [1, 2]) {
     const names = Object.keys(ACTION_NAMES).filter((a) => PERM[a] === level).map((a) => ACTION_NAMES[a]);
-    if (names.length) lines.push(`**${levelName(level)}:** ${names.join(', ')}`);
+    if (names.length) lines.push(`${LEVEL_EMOJI[level]} **${levelName(level)}:** ${names.join(', ')}`);
   }
   return ['Use the buttons below.', ...lines].join('\n');
 }
@@ -216,7 +219,9 @@ function panelPayload() {
   const embed = new EmbedBuilder()
     .setTitle(PANEL_TITLE)
     .setColor(0x2b6cb0)
-    .setDescription(permDescription());
+    .setDescription(permDescription())
+    .setFooter({ text: 'Main Game Admin Panel' })
+    .setTimestamp();
   return {
     embeds: [embed],
     components: [
@@ -309,7 +314,7 @@ async function onButton(i) {
     const held = [...ADMIN, ...STAFF].filter((r, n, all) => all.indexOf(r) === n && i.member.roles.cache.has(r));
     const embed = new EmbedBuilder()
       .setTitle('Your panel access')
-      .setColor(0x2b6cb0)
+      .setColor(level >= 2 ? 0xe53e3e : level === 1 ? 0x2b6cb0 : 0x718096)
       .addFields(
         { name: 'Access level', value: levelName(level) },
         { name: 'Matching roles', value: held.length ? held.map((r) => `<@&${r}>`).join(', ') : 'None' },
